@@ -1,37 +1,54 @@
-// waBot.js
-import bail from "@future-innovations-lk/baileys";
-const {
-  makeWASocket,
+import makeWASocket, {
   DisconnectReason,
+  Browsers,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
   jidNormalizedUser,
-} = bail;
+} from "@whiskeysockets/baileys";
 
 import P from "pino";
-import config from "./config.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
 import { loadPlugins } from "./lib/loader.js";
 import { useMongoDBAuthState } from "./lib/auth/mongoAuth.js";
+import config from "./config.js";
 import { handleMessage } from "./messageHandler.js";
-import { getSessionSettings } from "./lib/settings/sessionSettings.js";
-import { getGroupSettings } from "./lib/settings/groupSettings.js";
-import { renderTemplate } from "./lib/helpers/text.js";
-import { handleBootCommand } from "./lib/helpers/bootHandler.js";
+import { getSettings } from "./lib/settings.js";
+import { handleBootCommand } from "./lib/bootHandler.js"; // boot command handler
 
-// session settings cache
-const settingsCache = new Map(); // sessionId -> { settings, ts }
-async function loadSettings(sessionId) {
+// =====================================================
+// FILE PATH
+// =====================================================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const number = config.BOT_NUMBER;
+
+let plugins = {};
+let pairingRequested = false;
+
+// =====================================================
+// SETTINGS CACHE
+// =====================================================
+let cachedSettings = null;
+let lastSettingsLoad = 0;
+
+async function loadSettings() {
   const now = Date.now();
-  const cached = settingsCache.get(sessionId);
-  if (!cached || now - cached.ts > 5000) {
-    const s = await getSessionSettings(sessionId);
-    settingsCache.set(sessionId, { settings: s, ts: now });
+
+  // refresh every 5 seconds
+  if (!cachedSettings || now - lastSettingsLoad > 5000) {
+    cachedSettings = await getSettings();
+    lastSettingsLoad = now;
   }
-  return settingsCache.get(sessionId).settings;
+
+  return cachedSettings;
 }
 
-const pairingRequestedBySession = new Map();
-
+// =====================================================
+// EMOJI POOL
+// =====================================================
 const STATUS_REACTS = [
   "❤️",
   "💙",
@@ -40,33 +57,108 @@ const STATUS_REACTS = [
   "💜",
   "🧡",
   "🩷",
+  "🩵",
   "🤍",
+  "🤎",
+  "💖",
+  "💘",
+  "💝",
+  "💗",
+  "💓",
+  "💞",
+  "💟",
+  "😍",
+  "🥰",
+  "😘",
+  "🔥",
+  "💯",
   "✨",
   "⚡",
+  "🌟",
+  "🫶",
+  "🙌",
+  "👏",
   "😎",
+  "🤯",
+  "😮",
+  "🤩",
+  "🤝",
+  "👌",
+  "👍",
+  "💥",
+  "🎉",
+  "🕺",
+  "💃",
   "😂",
+  "🤣",
+  "😹",
+  "😆",
+  "😄",
+  "😁",
+  "😅",
+  "😊",
+  "🙂",
+  "😸",
+  "😜",
+  "🤪",
+  "🤭",
+  "👀",
+  "😳",
+  "😱",
+  "🤔",
+  "😏",
+  "😌",
+  "😴",
+  "🥹",
+  "😋",
+  "😶‍🌫️",
+  "😐",
+  "😑",
+  "🙃",
+  "😬",
+  "🫣",
+  "🤗",
+  "🌈",
+  "🌸",
+  "🌼",
+  "🌻",
+  "🍀",
+  "🎨",
+  "📸",
+  "🎬",
+  "🎧",
+  "🎶",
+  "🍿",
+  "☕",
+  "🛸",
+  "🚀",
+  "🐾",
+  "🦋",
+  "😈",
+  "👻",
+  "💀",
+  "🤡",
+  "💩",
+  "👽",
+  "🫠",
+  "🫥",
   "🤖",
+  "🎯",
 ];
-const getRandomReact = () =>
-  STATUS_REACTS[Math.floor(Math.random() * STATUS_REACTS.length)];
 
-function formatPairCode(code) {
-  if (!code) return code;
-  const raw = String(code).replace(/\s+/g, "");
-  return raw.length >= 8 ? raw.slice(0, 4) + "-" + raw.slice(4) : raw;
+function getRandomReact() {
+  return STATUS_REACTS[Math.floor(Math.random() * STATUS_REACTS.length)];
 }
 
-export async function connectToWA({ sessionId, number, onPairingCode } = {}) {
-  sessionId ||= "default";
-
-  const plugins = await loadPlugins();
-
-  console.log(`🧬 Connecting WhatsApp bot... session=${sessionId}`);
+// =====================================================
+// WA CONNECTOR
+// =====================================================
+export async function connectToWA() {
+  console.log("🧬 Connecting WhatsApp bot...");
 
   const { state, saveCreds } = await useMongoDBAuthState(
     config.MONGODB_URI,
     config.DB_NAME,
-    sessionId,
   );
 
   const { version } = await fetchLatestBaileysVersion();
@@ -74,152 +166,153 @@ export async function connectToWA({ sessionId, number, onPairingCode } = {}) {
   const conn = makeWASocket({
     logger: P({ level: "silent" }),
     printQRInTerminal: false,
-    browser: ["macOS", "Safari", "20.0.0"],
+    browser: Browsers.ubuntu("Chrome"),
     markOnlineOnConnect: true,
     syncFullHistory: false,
+
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, P({ level: "silent" })),
     },
+
     version,
     qrTimeout: 0,
     getMessage: async () => ({ conversation: "" }),
   });
 
-  conn.requestPairCodeAndNotify = async () => {
-    if (!number) throw new Error("No number provided for pairing.");
-    const code = await conn.requestPairingCode(number);
-    const pretty = formatPairCode(code);
-    if (typeof onPairingCode === "function") await onPairingCode(pretty);
-    return pretty;
-  };
-
+  // =====================================================
+  // CONNECTION LISTENER
+  // =====================================================
   conn.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
-    const already = pairingRequestedBySession.get(sessionId) || false;
-
-    if (qr && !already) {
-      pairingRequestedBySession.set(sessionId, true);
-      if (number) {
-        try {
-          await conn.requestPairCodeAndNotify();
-        } catch (e) {
-          console.log(`❌ [${sessionId}] Pairing failed:`, e.message);
-          pairingRequestedBySession.set(sessionId, false);
-        }
+    if (qr && !pairingRequested) {
+      pairingRequested = true;
+      try {
+        const code = await conn.requestPairingCode(number);
+        console.log("🔗 Pairing Code:", code.slice(0, 4) + "-" + code.slice(4));
+      } catch (e) {
+        console.log("❌ Pairing failed:", e.message);
       }
     }
 
     if (connection === "open") {
       const botJid = jidNormalizedUser(conn.user.id);
-      console.log(`✅ [${sessionId}] Connected`);
+      console.log("✅ Bot Connected");
 
       await conn.sendMessage(botJid, {
-        text: `🤖 Streamline-MD-V2 connected! (session: ${sessionId})`,
+        text: "🤖 Streamline-MD-V2 connected successfully!",
       });
+
+      plugins = await loadPlugins();
+      console.log("🔌 Plugins loaded:", Object.keys(plugins).length);
     }
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
 
-      if (code === 401)
-        console.log(`⚠️ [${sessionId}] Auth failed — login again.`);
-      else if (code !== DisconnectReason.loggedOut) {
-        console.log(`🔄 [${sessionId}] Reconnecting...`);
-        pairingRequestedBySession.set(sessionId, false);
-        setTimeout(
-          () => connectToWA({ sessionId, number, onPairingCode }),
-          3000,
-        );
+      if (code === 401) {
+        console.log("⚠️ Auth failed — login again.");
+      } else if (code !== DisconnectReason.loggedOut) {
+        console.log("🔄 Reconnecting in 3 seconds...");
+        pairingRequested = false;
+        setTimeout(connectToWA, 3000);
       } else {
-        console.log(`❌ [${sessionId}] Logged out.`);
+        console.log("❌ Logged out of WhatsApp.");
       }
     }
   });
 
   conn.ev.on("creds.update", saveCreds);
 
-  // ✅ Anti-call (per session)
+  // =====================================================
+  // CALL HANDLER (ANTI-CALL)
+  // =====================================================
   conn.ev.on("call", async (callEvents) => {
-    const settings = await loadSettings(sessionId);
+    const settings = await loadSettings();
+
+    // If feature is disabled, do nothing
     if (!settings.autoRejectCalls) return;
+
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    const randomInt = (min, max) =>
+      Math.floor(Math.random() * (max - min + 1)) + min;
+
+    // Best-effort pushName lookup (depends on how your bot stores contacts)
+    const getPushName = (jid) => {
+      const contact =
+        // some setups attach a Map-like contacts store
+        conn?.contacts?.[jid] ||
+        conn?.contacts?.get?.(jid) ||
+        // common Baileys store pattern
+        conn?.store?.contacts?.[jid] ||
+        conn?.store?.contacts?.get?.(jid);
+
+      return contact?.notify || contact?.name || contact?.verifiedName || null;
+    };
 
     for (const call of callEvents) {
       if (call.status !== "offer") continue;
+
       const jid = call.from;
+      const name = getPushName(jid) || "bestie"; // cute fallback 😭
+
+      // wait 1s to 4s before declining (but message goes first)
+      const delayMs = randomInt(1000, 4000);
+
+      const brandLine = "⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝐃 (𝘝2) ⚡";
+      const cuteMsg =
+        `${brandLine}\n\n` +
+        `Hey ${name} ✨\n` +
+        `Calls aren’t supported right now 😿\n` +
+        `But you can totally drop me a text and I’ll reply super fast 💬⚡\n\n` +
+        `Thanks for understanding 🫶`;
 
       try {
-        await conn.sendMessage(jid, {
-          text: "⚡ STREAM LINE MD (V2) ⚡\n\nCalls aren’t supported 😿\nSend a message instead 💬",
-        });
+        // 1) send message first
+        await conn.sendMessage(jid, { text: cuteMsg });
+
+        // 2) then wait a random time
+        await sleep(delayMs);
+
+        // 3) then reject the call
         await conn.rejectCall(call.id, jid);
-        console.log(`🚫 [${sessionId}] Call rejected: ${jid}`);
+
+        console.log(`🚫 Call rejected from: ${jid} (delay ${delayMs}ms)`);
       } catch (err) {
-        console.error(`❌ [${sessionId}] [CALL ERROR]`, err);
+        console.error("❌ [CALL HANDLER ERROR]", err);
       }
     }
   });
 
-  // ✅ Welcome / Bye (per group per session)
-  conn.ev.on("group-participants.update", async (ev) => {
-    try {
-      const groupJid = ev.id;
-      if (!groupJid?.endsWith("@g.us")) return;
-
-      let meta = null;
-      try {
-        meta = await conn.groupMetadata(groupJid);
-      } catch {}
-
-      const groupName = meta?.subject || "this group";
-      const gs = await getGroupSettings(sessionId, groupJid, { groupName });
-
-      if (ev.action === "add" && gs.welcome?.enabled) {
-        for (const userJid of ev.participants || []) {
-          const text = renderTemplate(gs.welcome.text, {
-            user: `@${userJid.split("@")[0]}`,
-            group: groupName,
-            rules: gs.rules?.text || "",
-          });
-          await conn.sendMessage(groupJid, { text, mentions: [userJid] });
-        }
-      }
-
-      if (ev.action === "remove" && gs.bye?.enabled) {
-        for (const userJid of ev.participants || []) {
-          const text = renderTemplate(gs.bye.text, {
-            user: `@${userJid.split("@")[0]}`,
-            group: groupName,
-          });
-          await conn.sendMessage(groupJid, { text, mentions: [userJid] });
-        }
-      }
-    } catch (err) {
-      console.error(`❌ [${sessionId}] [GROUP UPDATE ERROR]`, err);
-    }
-  });
-
-  // ✅ Messages
+  // =====================================================
+  // MESSAGE HANDLER
+  // =====================================================
   conn.ev.on("messages.upsert", async ({ messages }) => {
     const mek = messages?.[0];
-    console.log(`📩 [${sessionId}] New message:`, mek);
     if (!mek?.message) return;
+
     if (mek.message.reactionMessage) return;
 
     const jid = mek.key.remoteJid;
     const sender = mek.key.participant || jid;
 
-    const settings = await loadSettings(sessionId);
+    console.log(mek);
 
-    // per-session kill switch
+    // =====================================================
+    // CHECK BOT ENABLE FLAG (KILL SWITCH)
+    // =====================================================
+    const settings = await loadSettings();
     if (!settings.botEnabled) {
-      const handled = await handleBootCommand(conn, mek, sessionId);
-      if (handled) return;
-      return;
+      // Only allow boot command
+      const handled = await handleBootCommand(conn, mek);
+      if (handled) return; // stop further processing
+      return; // ignore all other commands
     }
 
-    // ✅ status auto read/react (per session)
+    // =====================================================
+    // STATUS HANDLING (RESPECTS SETTINGS)
+    // =====================================================
     if (jid === "status@broadcast") {
       try {
         if (settings.autoReadStatus) await conn.readMessages([mek.key]);
@@ -232,17 +325,19 @@ export async function connectToWA({ sessionId, number, onPairingCode } = {}) {
           });
         }
       } catch (err) {
-        console.error(`❌ [${sessionId}] [STATUS ERROR]`, err);
+        console.error("❌ [STATUS ERROR]", err);
       }
       return;
     }
 
-    await handleMessage(conn, mek, {
-      sessionId,
-      plugins,
-      ownerNumbers: config.OWNER_NUMBERS,
-      settings,
-    });
+    // =====================================================
+    // NORMAL COMMAND HANDLING
+    // =====================================================
+    try {
+      await handleMessage(conn, mek, config.OWNER_NUMBERS);
+    } catch (err) {
+      console.error("❌ [HANDLER ERROR]", err);
+    }
   });
 
   return conn;

@@ -1,162 +1,76 @@
 // messageHandler.js
-import bail from "@future-innovations-lk/baileys";
-const { jidNormalizedUser, getContentType } = bail;
-
-import { sms } from "./lib/msg.js";
-import { getGroupAdmins } from "./lib/functions.js";
+import { jidNormalizedUser, getContentType } from "@whiskeysockets/baileys";
+import { sms, downloadMediaMessage } from "./lib/msg.js";
+import { getBuffer, getGroupAdmins } from "./lib/functions.js";
+import axios from "axios";
+import config from "./config.js";
+import { loadAllCommands } from "./command.js";
 import { getReply } from "./lib/replyStore.js";
-import { extractInteractiveCommand } from "./lib/helpers/interaction.js";
+import { getSettings } from "./lib/settings.js";
 
-/* =========================
-   HELPERS
-========================= */
-function normalizeHelp(cmd, prefix) {
-  if (typeof cmd.help === "function") return cmd.help({ prefix, cmd });
-  if (typeof cmd.help === "string" && cmd.help.trim()) return cmd.help.trim();
-
-  const aliases = cmd.alias?.length ? `\nAliases: ${cmd.alias.join(", ")}` : "";
-  return `Usage: ${prefix}${cmd.pattern}\n${cmd.disc || "No description."}${aliases}`;
-}
-
-function findCommand(plugins, name) {
-  const n = String(name || "").toLowerCase();
-  const all = Object.values(plugins || {}).filter(Boolean);
-
-  return (
-    all.find((c) => c?.pattern?.toLowerCase() === n) ||
-    all.find((c) => (c?.alias || []).some((a) => String(a).toLowerCase() === n))
-  );
-}
-
-/**
- * Extract user-visible text from many WA message types.
- * This ensures reply-store and commands work even when user replies via buttons/lists/etc.
- */
-function getBodyText(mek, type) {
-  const msg = mek?.message || {};
-
-  if (type === "conversation") return msg.conversation || "";
-  if (type === "extendedTextMessage")
-    return msg.extendedTextMessage?.text || "";
-  if (type === "imageMessage") return msg.imageMessage?.caption || "";
-  if (type === "videoMessage") return msg.videoMessage?.caption || "";
-  if (type === "documentMessage") return msg.documentMessage?.caption || "";
-
-  // Buttons / lists / templates (common in Baileys)
-  if (type === "buttonsResponseMessage") {
-    return (
-      msg.buttonsResponseMessage?.selectedButtonId ||
-      msg.buttonsResponseMessage?.selectedDisplayText ||
-      ""
-    );
-  }
-
-  if (type === "listResponseMessage") {
-    return (
-      msg.listResponseMessage?.singleSelectReply?.selectedRowId ||
-      msg.listResponseMessage?.title ||
-      ""
-    );
-  }
-
-  if (type === "templateButtonReplyMessage") {
-    return (
-      msg.templateButtonReplyMessage?.selectedId ||
-      msg.templateButtonReplyMessage?.selectedDisplayText ||
-      ""
-    );
-  }
-
-  // Newer interactive responses (depends on baileys version)
-  if (type === "interactiveResponseMessage") {
-    // some builds keep text/json; safest fallback:
-    return (
-      msg.interactiveResponseMessage?.body?.text ||
-      msg.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
-      ""
-    );
-  }
-
-  return "";
-}
-
-/**
- * Extract stanzaId for replies from ANY message type.
- * Your old version only checked extendedTextMessage contextInfo, which breaks threads.
- */
-function getReplyStanzaId(mek) {
-  const msg = mek?.message || {};
-
-  const ctxInfo =
-    msg?.extendedTextMessage?.contextInfo ||
-    msg?.imageMessage?.contextInfo ||
-    msg?.videoMessage?.contextInfo ||
-    msg?.documentMessage?.contextInfo ||
-    msg?.audioMessage?.contextInfo ||
-    msg?.stickerMessage?.contextInfo ||
-    msg?.buttonsResponseMessage?.contextInfo ||
-    msg?.listResponseMessage?.contextInfo ||
-    msg?.templateButtonReplyMessage?.contextInfo ||
-    msg?.interactiveResponseMessage?.contextInfo ||
-    msg?.messageContextInfo || // sometimes present
-    null;
-
-  return ctxInfo?.stanzaId || null;
-}
-
-/* =========================
-   MAIN
-========================= */
-export async function handleMessage(
-  conn,
-  mek,
-  {
-    sessionId = "default",
-    plugins = {},
-    ownerNumbers = [],
-    settings = null,
-  } = {},
-) {
+export async function handleMessage(conn, mek, ownerNumbers = []) {
+  // normalize message
   const m = await sms(conn, mek);
 
   const type = getContentType(mek.message);
   const from = mek.key.remoteJid;
 
-  // ✅ unified body extraction
-  let body = getBodyText(mek, type);
+  let cachedSettings = null;
+  let lastSettingsLoad = 0;
 
-  const prefix = settings?.prefix || ".";
+  async function loadSettings() {
+    const now = Date.now();
 
-  // ✅ UI interaction routing: convert list/button selection into command text
-  const interactiveCmd = extractInteractiveCommand(mek);
-  if (interactiveCmd && typeof interactiveCmd === "string") {
-    body = interactiveCmd.startsWith(prefix)
-      ? interactiveCmd
-      : `${prefix}${interactiveCmd}`;
+    // refresh every 5 seconds
+    if (!cachedSettings || now - lastSettingsLoad > 5000) {
+      cachedSettings = await getSettings();
+      lastSettingsLoad = now;
+    }
+
+    return cachedSettings;
   }
 
-  const bodyTrim = (body || "").trim();
-  const isCmd = bodyTrim.startsWith(prefix);
+  // get quoted message if exists
+  const quoted =
+    type === "extendedTextMessage" &&
+    mek.message.extendedTextMessage?.contextInfo
+      ? mek.message.extendedTextMessage.contextInfo.quotedMessage || []
+      : [];
 
+  // get message body
+  const body =
+    type === "conversation"
+      ? mek.message.conversation
+      : type === "extendedTextMessage"
+      ? mek.message.extendedTextMessage.text
+      : type === "imageMessage" && mek.message.imageMessage.caption
+      ? mek.message.imageMessage.caption
+      : type === "videoMessage" && mek.message.videoMessage.caption
+      ? mek.message.videoMessage.caption
+      : "";
+
+  const settings = await loadSettings();
+
+  const prefix = settings.prefix || config.PREFIX || ".";
+  const isCmd = body.startsWith(prefix);
   const command = isCmd
-    ? bodyTrim.slice(prefix.length).trim().split(/\s+/)[0].toLowerCase()
+    ? body.slice(prefix.length).trim().split(" ")[0].toLowerCase()
     : "";
-
-  const args = isCmd
-    ? bodyTrim.slice(prefix.length).trim().split(/\s+/).slice(1)
-    : [];
-
+  const args = body.trim().split(/ +/).slice(1);
   const q = args.join(" ");
-
-  const isGroup = (from || "").endsWith("@g.us");
+  const isGroup = from.endsWith("@g.us");
 
   // ---------------------------
   // Sender Normalization
   // ---------------------------
   let rawSender;
-  if (mek.key.fromMe) rawSender = conn.user.id;
-  else if (mek.key.participantAlt) rawSender = mek.key.participantAlt;
-  else rawSender = mek.key.participant || mek.key.remoteJid;
+  if (mek.key.fromMe) {
+    rawSender = conn.user.id;
+  } else if (mek.key.participantAlt) {
+    rawSender = mek.key.participantAlt;
+  } else {
+    rawSender = mek.key.participant || mek.key.remoteJid;
+  }
 
   const sender = jidNormalizedUser(rawSender);
   const senderNumber = sender.split("@")[0];
@@ -167,23 +81,113 @@ export async function handleMessage(
   const isMe = botNumber.includes(senderNumber);
   const isOwner = ownerNumbers.includes(senderNumber) || isMe;
 
+  // ---------------------------
+  // Group info
+  // ---------------------------
+  const groupMetadata = isGroup
+    ? await conn.groupMetadata(from).catch(() => null)
+    : null;
+
+  const groupName = groupMetadata?.subject || "";
+  const participants = groupMetadata?.participants || [];
+  const groupJid = groupMetadata?.id || "";
+
+  const groupAdmins = isGroup ? await getGroupAdmins(participants) : [];
   const botJid = jidNormalizedUser(conn.user.id);
 
-  // Reply helper
-  const reply = (text) => conn.sendMessage(from, { text }, { quoted: mek });
+  const isBotAdmins = groupAdmins.includes(botJid);
+  const isAdmins = groupAdmins.includes(sender);
 
   // ---------------------------
-  // ✅ Reply listener (session safe) — NOW WORKS FOR ALL MESSAGE TYPES
+  // Reply helper
   // ---------------------------
-  const stanzaId = getReplyStanzaId(mek);
+  const reply = (text) => {
+    conn.sendMessage(from, { text }, { quoted: mek });
+  };
+
+  // ---------------------------
+  // File sender helper
+  // ---------------------------
+  conn.sendFileUrl = async (
+    jid,
+    url,
+    caption = "",
+    quotedMsg = null,
+    options = {}
+  ) => {
+    const head = await axios.head(url).catch(() => null);
+
+    if (!head?.headers?.["content-type"]) {
+      const buf = await getBuffer(url);
+      return conn.sendMessage(
+        jid,
+        { document: buf, caption, mimetype: "application/octet-stream" },
+        { quoted: quotedMsg }
+      );
+    }
+
+    const contentType = head.headers["content-type"];
+    const [type] = contentType.split("/");
+
+    const buf = await getBuffer(url);
+
+    if (contentType === "image/gif") {
+      return conn.sendMessage(
+        jid,
+        {
+          video: buf,
+          caption,
+          gifPlayback: true,
+          mimetype: "video/mp4",
+          ...options,
+        },
+        { quoted: quotedMsg }
+      );
+    }
+
+    if (type === "image") {
+      return conn.sendMessage(
+        jid,
+        { image: buf, caption, ...options },
+        { quoted: quotedMsg }
+      );
+    }
+
+    if (type === "video") {
+      return conn.sendMessage(
+        jid,
+        { video: buf, caption, mimetype: contentType, ...options },
+        { quoted: quotedMsg }
+      );
+    }
+
+    if (type === "audio") {
+      return conn.sendMessage(
+        jid,
+        { audio: buf, caption, mimetype: contentType, ...options },
+        { quoted: quotedMsg }
+      );
+    }
+
+    return conn.sendMessage(
+      jid,
+      { document: buf, caption, mimetype: contentType, ...options },
+      { quoted: quotedMsg }
+    );
+  };
+
+  // ====================================================
+  // ✅ REPLY LISTENER HANDLING (NEW)
+  // ====================================================
+
+  const stanzaId = mek.message?.extendedTextMessage?.contextInfo?.stanzaId;
 
   if (stanzaId) {
-    const replyData = getReply(sessionId, stanzaId);
-    console.log("🧵 stanzaId:", stanzaId, "found:", !!replyData);
+    const replyData = getReply(stanzaId);
 
     if (replyData?.onReply) {
       try {
-        await replyData.onReply(bodyTrim, {
+        await replyData.onReply(body.trim(), {
           conn,
           mek,
           m,
@@ -192,63 +196,30 @@ export async function handleMessage(
           senderNumber,
           isOwner,
           reply,
-          sessionId,
-          settings,
-          prefix,
-          key: mek.key,
-          plugins,
-          isGroup,
-          pushname,
-          botJid,
-          botNumber,
         });
       } catch (err) {
-        console.error("❌ [REPLY HANDLER ERROR]", err);
+        console.error("[REPLY HANDLER ERROR]", err);
       }
-      return; // stop normal command processing
+
+      // ⛔ stop normal command processing
+      return;
     }
   }
 
-  // ---------------------------
-  // ✅ Not a command? done.
-  // ---------------------------
+  // ====================================================
+  // ✅ NORMAL COMMAND HANDLING
+  // ====================================================
   if (!isCmd) return;
 
-  // ---------------------------
-  // Group info (lazy: only when command exists + needs ctx)
-  // ---------------------------
-  let groupMetadata = null;
-  let groupName = "";
-  let participants = [];
-  let groupAdmins = [];
-  let isBotAdmins = false;
-  let isAdmins = false;
+  const commands = await loadAllCommands();
 
-  if (isGroup) {
-    groupMetadata = await conn.groupMetadata(from).catch(() => null);
-    groupName = groupMetadata?.subject || "";
-    participants = groupMetadata?.participants || [];
-    groupAdmins = await getGroupAdmins(participants);
-    isBotAdmins = groupAdmins.includes(botJid);
-    isAdmins = groupAdmins.includes(sender);
-  }
+  const cmd =
+    commands.find((c) => c.pattern === command) ||
+    commands.find((c) => c.alias?.includes(command));
 
-  const cmd = findCommand(plugins, command);
+  if (!cmd) return;
 
-  if (!cmd) {
-    return reply(
-      `❌ Unknown command: *${command}*\nType *${prefix}help* to see commands.`,
-    );
-  }
-
-  // ✅ .cmd help / ? / --help
-  if (q === "help" || q === "?" || q === "--help") {
-    return reply(
-      `📖 *Help — ${prefix}${cmd.pattern}*\n\n${normalizeHelp(cmd, prefix)}`,
-    );
-  }
-
-  // react
+  // react to command
   if (cmd.react) {
     await conn.sendMessage(from, {
       react: { text: cmd.react, key: mek.key },
@@ -258,7 +229,8 @@ export async function handleMessage(
   try {
     await cmd.function(conn, mek, m, {
       from,
-      body: bodyTrim,
+      quoted,
+      body,
       isCmd,
       command,
       args,
@@ -271,24 +243,16 @@ export async function handleMessage(
       pushname,
       isMe,
       isOwner,
-
       groupMetadata,
       groupName,
       participants,
       groupAdmins,
       isBotAdmins,
       isAdmins,
-
       reply,
-
-      // ✅ session + runtime
-      sessionId,
-      settings,
-      prefix,
-      plugins,
+      groupJid,
     });
   } catch (e) {
-    console.error("❌ [PLUGIN ERROR]", e);
-    reply(`❌ Error in *${cmd.pattern}*\n${e?.message || e}`);
+    console.error("[PLUGIN ERROR]", e);
   }
 }
