@@ -2,6 +2,7 @@ import { downloadMediaMessage, sms } from "../lib/msg.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import botdata from "../botdata.json" assert { type: "json" };
 
 export default {
   pattern: "gsetpf",
@@ -14,54 +15,52 @@ export default {
     const targetMsg = msg.quoted || msg;
 
     const { isOwner, isGroup, isAdmins, isBotAdmins, groupJid } = ctx;
+
+    const HEADER = botdata.header;
+    const FOOTER = botdata.footer;
+
     if (!isGroup) {
       m.react("❌");
-      m.reply("⚡ Oops! This command works only in groups.");
-      return;
+      return m.reply(`${HEADER}\n\n⚡ This command works only in groups.\n\n${FOOTER}`);
     }
 
     if (!isOwner && !isAdmins) {
       m.react("❌");
-      m.reply("⛔ Only the owner or admins can change Group profile picture.");
-      return;
-    }
-    if (!isBotAdmins) {
-      m.react("❌");
-      m.reply("⛔ I need to be an admin to change Group profile picture.");
-      return;
+      return m.reply(`${HEADER}\n\n⛔ Only owner or admins can change group profile picture.\n\n${FOOTER}`);
     }
 
-    if (!targetMsg || !["imageMessage"].includes(targetMsg.type)) {
+    if (!isBotAdmins) {
       m.react("❌");
-      m.reply("📷 Please reply to an image to set as Group profile picture.");
-      return;
+      return m.reply(`${HEADER}\n\n⛔ I need admin rights to change profile picture.\n\n${FOOTER}`);
     }
+
+    if (!targetMsg || targetMsg.type !== "imageMessage") {
+      m.react("❌");
+      return m.reply(`${HEADER}\n\n📷 Reply to an image to set as group profile picture.\n\n${FOOTER}`);
+    }
+
     if (!groupJid) {
       m.react("❌");
-      m.reply("⚠️ Unable to retrieve group information. Please try again.");
-      return;
+      return m.reply(`${HEADER}\n\n⚠️ Unable to retrieve group info.\n\n${FOOTER}`);
     }
 
     try {
-      // Download the image buffer
       const buffer = await downloadMediaMessage(targetMsg);
 
-      // Save it to a temporary file
       const tmpFile = path.join(os.tmpdir(), `pf-${Date.now()}.jpg`);
       fs.writeFileSync(tmpFile, buffer);
 
-      // Update profile picture
       await conn.updateProfilePicture(groupJid, { url: tmpFile });
 
-      // Delete the temporary file
       fs.unlinkSync(tmpFile);
 
       m.react("✅");
-      m.reply("✨ Profile picture updated✨\n⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝘋 (𝘝2) ⚡");
+      m.reply(`${HEADER}\n\n✨ Profile picture updated successfully!\n\n${FOOTER}`);
+
     } catch (err) {
       console.error(err);
       m.react("❌");
-      m.reply("⚠️ Failed to update profile picture. Please try again!");
+      m.reply(`${HEADER}\n\n${botdata.error}\n\n${FOOTER}`);
     }
   },
 };

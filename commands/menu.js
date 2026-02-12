@@ -1,4 +1,5 @@
 import { generateCommandMenu } from "../command.js";
+import { formatMenu } from "../lib/style.js";
 
 export default {
   pattern: "menu",
@@ -6,8 +7,14 @@ export default {
   category: "Main",
 
   async function(conn, mek, m, ctx) {
-    const menu = await generateCommandMenu();
+    const rawMenu = await generateCommandMenu();
 
-    await conn.sendMessage(ctx.from, { text: menu }, { quoted: mek });
+    const menu = formatMenu(rawMenu);
+
+    await conn.sendMessage(
+      ctx.from,
+      { text: menu },
+      { quoted: mek }
+    );
   },
 };

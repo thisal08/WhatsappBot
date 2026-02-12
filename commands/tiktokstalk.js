@@ -1,4 +1,6 @@
 import axios from "axios";
+import botdata from "../botdata.json" assert { type: "json" };
+import { format } from "../lib/style.js";
 
 export default {
   pattern: "tiktokstalk",
@@ -15,7 +17,9 @@ export default {
         return conn.sendMessage(
           ctx.from,
           {
-            text: "❎ Please provide a TikTok username.\n\nExample: *.tiktokstalk backup.pavan.lk*",
+            text: format(
+              "❎ Please provide a TikTok username.\n\nExample: *.tiktokstalk backup.pavan.lk*"
+            ),
           },
           { quoted: mek }
         );
@@ -25,14 +29,14 @@ export default {
         username
       )}`;
 
-      console.log("🔗 Fetching TikTok API URL:", apiUrl);
-
       const { data } = await axios.get(apiUrl);
 
       if (data.code !== 0 || !data.data) {
         return conn.sendMessage(
           ctx.from,
-          { text: "❌ Could not fetch profile. User may not exist." },
+          {
+            text: format("❌ Could not fetch profile. User may not exist."),
+          },
           { quoted: mek }
         );
       }
@@ -40,7 +44,8 @@ export default {
       const user = data.data.user;
       const stats = data.data.stats;
 
-      const caption = `🎭 *TikTok Profile Viewer* 🎭
+      const caption = `
+🎭 *TikTok Profile Viewer*
 
 👤 *Username:* @${user.uniqueId}
 📛 *Nickname:* ${user.nickname}
@@ -53,22 +58,26 @@ export default {
 ❤️ Likes: ${stats.heartCount.toLocaleString()}
 🎥 Videos: ${stats.videoCount.toLocaleString()}
 
-🌍 *Profile:* https://www.tiktok.com/@${user.uniqueId}
-`;
+🌍 Profile: https://www.tiktok.com/@${user.uniqueId}
+      `.trim();
 
       await conn.sendMessage(
         ctx.from,
         {
           image: { url: user.avatarLarger },
-          caption,
+          caption: format(caption),
         },
         { quoted: mek }
       );
+
     } catch (err) {
       console.error("TikTok Stalk Error:", err);
+
       await conn.sendMessage(
         ctx.from,
-        { text: "⚠️ Something went wrong fetching TikTok data." },
+        {
+          text: format(botdata.error || "⚠️ Something went wrong fetching TikTok data."),
+        },
         { quoted: mek }
       );
     }

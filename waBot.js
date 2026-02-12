@@ -15,7 +15,8 @@ import { useMongoDBAuthState } from "./lib/auth/mongoAuth.js";
 import config from "./config.js";
 import { handleMessage } from "./messageHandler.js";
 import { getSettings } from "./lib/settings.js";
-import { handleBootCommand } from "./lib/bootHandler.js"; // boot command handler
+import { handleBootCommand } from "./lib/bootHandler.js";
+import botdata from "./botdata.json" assert { type: "json" };
 
 // =====================================================
 // FILE PATH
@@ -36,13 +37,10 @@ let lastSettingsLoad = 0;
 
 async function loadSettings() {
   const now = Date.now();
-
-  // refresh every 5 seconds
   if (!cachedSettings || now - lastSettingsLoad > 5000) {
     cachedSettings = await getSettings();
     lastSettingsLoad = now;
   }
-
   return cachedSettings;
 }
 
@@ -50,100 +48,13 @@ async function loadSettings() {
 // EMOJI POOL
 // =====================================================
 const STATUS_REACTS = [
-  "❤️",
-  "💙",
-  "💚",
-  "💛",
-  "💜",
-  "🧡",
-  "🩷",
-  "🩵",
-  "🤍",
-  "🤎",
-  "💖",
-  "💘",
-  "💝",
-  "💗",
-  "💓",
-  "💞",
-  "💟",
-  "😍",
-  "🥰",
-  "😘",
-  "🔥",
-  "💯",
-  "✨",
-  "⚡",
-  "🌟",
-  "🫶",
-  "🙌",
-  "👏",
-  "😎",
-  "🤯",
-  "😮",
-  "🤩",
-  "🤝",
-  "👌",
-  "👍",
-  "💥",
-  "🎉",
-  "🕺",
-  "💃",
-  "😂",
-  "🤣",
-  "😹",
-  "😆",
-  "😄",
-  "😁",
-  "😅",
-  "😊",
-  "🙂",
-  "😸",
-  "😜",
-  "🤪",
-  "🤭",
-  "👀",
-  "😳",
-  "😱",
-  "🤔",
-  "😏",
-  "😌",
-  "😴",
-  "🥹",
-  "😋",
-  "😶‍🌫️",
-  "😐",
-  "😑",
-  "🙃",
-  "😬",
-  "🫣",
-  "🤗",
-  "🌈",
-  "🌸",
-  "🌼",
-  "🌻",
-  "🍀",
-  "🎨",
-  "📸",
-  "🎬",
-  "🎧",
-  "🎶",
-  "🍿",
-  "☕",
-  "🛸",
-  "🚀",
-  "🐾",
-  "🦋",
-  "😈",
-  "👻",
-  "💀",
-  "🤡",
-  "💩",
-  "👽",
-  "🫠",
-  "🫥",
-  "🤖",
-  "🎯",
+  "❤️","💙","💚","💛","💜","🧡","🩷","🩵","🤍","🤎",
+  "💖","💘","💝","💗","💓","💞","💟","😍","🥰","😘",
+  "🔥","💯","✨","⚡","🌟","🫶","🙌","👏","😎","🤯",
+  "😮","🤩","🤝","👌","👍","💥","🎉","😂","🤣","😊",
+  "🙂","😜","🤪","🤭","👀","😳","😱","🤔","😏","😌",
+  "🌈","🌸","🌼","🌻","🍀","🎨","📸","🎬","🎧","🎶",
+  "🚀","🐾","🦋","😈","👻","💀","🤖","🎯"
 ];
 
 function getRandomReact() {
@@ -151,14 +62,14 @@ function getRandomReact() {
 }
 
 // =====================================================
-// WA CONNECTOR
+// CONNECT FUNCTION
 // =====================================================
 export async function connectToWA() {
   console.log("🧬 Connecting WhatsApp bot...");
 
   const { state, saveCreds } = await useMongoDBAuthState(
     config.MONGODB_URI,
-    config.DB_NAME,
+    config.DB_NAME
   );
 
   const { version } = await fetchLatestBaileysVersion();
@@ -169,19 +80,17 @@ export async function connectToWA() {
     browser: Browsers.ubuntu("Chrome"),
     markOnlineOnConnect: true,
     syncFullHistory: false,
-
     auth: {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, P({ level: "silent" })),
     },
-
     version,
     qrTimeout: 0,
     getMessage: async () => ({ conversation: "" }),
   });
 
   // =====================================================
-  // CONNECTION LISTENER
+  // CONNECTION EVENTS
   // =====================================================
   conn.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -201,7 +110,12 @@ export async function connectToWA() {
       console.log("✅ Bot Connected");
 
       await conn.sendMessage(botJid, {
-        text: "🤖 Streamline-MD-V2 connected successfully!",
+        text: `${botdata.header}
+
+🤖 *${botdata.botName} (${botdata.version})*
+Connected successfully!
+
+${botdata.footer}`,
       });
 
       plugins = await loadPlugins();
@@ -226,61 +140,37 @@ export async function connectToWA() {
   conn.ev.on("creds.update", saveCreds);
 
   // =====================================================
-  // CALL HANDLER (ANTI-CALL)
+  // ANTI-CALL SYSTEM
   // =====================================================
   conn.ev.on("call", async (callEvents) => {
     const settings = await loadSettings();
-
-    // If feature is disabled, do nothing
     if (!settings.autoRejectCalls) return;
 
     const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
-    const randomInt = (min, max) =>
-      Math.floor(Math.random() * (max - min + 1)) + min;
-
-    // Best-effort pushName lookup (depends on how your bot stores contacts)
-    const getPushName = (jid) => {
-      const contact =
-        // some setups attach a Map-like contacts store
-        conn?.contacts?.[jid] ||
-        conn?.contacts?.get?.(jid) ||
-        // common Baileys store pattern
-        conn?.store?.contacts?.[jid] ||
-        conn?.store?.contacts?.get?.(jid);
-
-      return contact?.notify || contact?.name || contact?.verifiedName || null;
-    };
 
     for (const call of callEvents) {
       if (call.status !== "offer") continue;
 
       const jid = call.from;
-      const name = getPushName(jid) || "bestie"; // cute fallback 😭
+      const name = "bestie";
 
-      // wait 1s to 4s before declining (but message goes first)
-      const delayMs = randomInt(1000, 4000);
+      const delayMs = Math.floor(Math.random() * 3000) + 1000;
 
-      const brandLine = "⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝐃 (𝘝2) ⚡";
-      const cuteMsg =
-        `${brandLine}\n\n` +
+      const message =
+        `${botdata.header}\n\n` +
         `Hey ${name} ✨\n` +
         `Calls aren’t supported right now 😿\n` +
-        `But you can totally drop me a text and I’ll reply super fast 💬⚡\n\n` +
-        `Thanks for understanding 🫶`;
+        `Please send a message instead 💬⚡\n\n` +
+        `Thanks for understanding 🫶\n\n` +
+        `${botdata.footer}`;
 
       try {
-        // 1) send message first
-        await conn.sendMessage(jid, { text: cuteMsg });
-
-        // 2) then wait a random time
+        await conn.sendMessage(jid, { text: message });
         await sleep(delayMs);
-
-        // 3) then reject the call
         await conn.rejectCall(call.id, jid);
-
-        console.log(`🚫 Call rejected from: ${jid} (delay ${delayMs}ms)`);
+        console.log(`🚫 Call rejected from ${jid}`);
       } catch (err) {
-        console.error("❌ [CALL HANDLER ERROR]", err);
+        console.error("❌ Call handler error:", err);
       }
     }
   });
@@ -291,52 +181,44 @@ export async function connectToWA() {
   conn.ev.on("messages.upsert", async ({ messages }) => {
     const mek = messages?.[0];
     if (!mek?.message) return;
-
     if (mek.message.reactionMessage) return;
 
     const jid = mek.key.remoteJid;
     const sender = mek.key.participant || jid;
 
-    console.log(mek);
-
-    // =====================================================
-    // CHECK BOT ENABLE FLAG (KILL SWITCH)
-    // =====================================================
     const settings = await loadSettings();
+
+    // Kill switch
     if (!settings.botEnabled) {
-      // Only allow boot command
       const handled = await handleBootCommand(conn, mek);
-      if (handled) return; // stop further processing
-      return; // ignore all other commands
+      if (handled) return;
+      return;
     }
 
-    // =====================================================
-    // STATUS HANDLING (RESPECTS SETTINGS)
-    // =====================================================
+    // Status Handling
     if (jid === "status@broadcast") {
       try {
         if (settings.autoReadStatus) await conn.readMessages([mek.key]);
+
         if (settings.autoReactStatus) {
           await new Promise((r) =>
-            setTimeout(r, settings.reactDelayMs || 3000),
+            setTimeout(r, settings.reactDelayMs || 3000)
           );
           await conn.sendMessage(sender, {
             react: { text: getRandomReact(), key: mek.key },
           });
         }
       } catch (err) {
-        console.error("❌ [STATUS ERROR]", err);
+        console.error("❌ Status error:", err);
       }
       return;
     }
 
-    // =====================================================
-    // NORMAL COMMAND HANDLING
-    // =====================================================
+    // Normal commands
     try {
       await handleMessage(conn, mek, config.OWNER_NUMBERS);
     } catch (err) {
-      console.error("❌ [HANDLER ERROR]", err);
+      console.error("❌ Handler error:", err);
     }
   });
 

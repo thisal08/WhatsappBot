@@ -2,6 +2,7 @@ import { downloadMediaMessage, sms } from "../lib/msg.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import botdata from "../botdata.json" assert { type: "json" };
 
 export default {
   pattern: "setpf",
@@ -14,46 +15,51 @@ export default {
     const targetMsg = msg.quoted || msg;
     const { isOwner, isGroup, botJid } = ctx;
 
+    const HEADER = botdata.header;
+    const FOOTER = botdata.footer;
+
     if (isGroup) {
       m.react("❌");
-      m.reply(
-        "⚡ Oops! This command works only in private chats. For groups, try `.gsetpf`."
+      return m.reply(
+        `${HEADER}\n\n⚡ This command works only in private chats.\nFor groups, use *.gsetpf*.\n\n${FOOTER}`
       );
-      return;
     }
 
     if (!isOwner) {
       m.react("❌");
-      m.reply("⛔ Only the owner can change my profile picture.");
-      return;
+      return m.reply(
+        `${HEADER}\n\n⛔ Only the owner can change my profile picture.\n\n${FOOTER}`
+      );
     }
 
-    if (!targetMsg || !["imageMessage"].includes(targetMsg.type)) {
+    if (!targetMsg || targetMsg.type !== "imageMessage") {
       m.react("❌");
-      m.reply("📷 Please reply to an image to set as my profile picture.");
-      return;
+      return m.reply(
+        `${HEADER}\n\n📷 Reply to an image to set as my profile picture.\n\n${FOOTER}`
+      );
     }
 
     try {
-      // Download the image buffer
       const buffer = await downloadMediaMessage(targetMsg);
 
-      // Save it to a temporary file
       const tmpFile = path.join(os.tmpdir(), `pf-${Date.now()}.jpg`);
       fs.writeFileSync(tmpFile, buffer);
 
-      // Update profile picture
       await conn.updateProfilePicture(botJid, { url: tmpFile });
 
-      // Delete the temporary file
       fs.unlinkSync(tmpFile);
 
       m.react("✅");
-      m.reply("✨ Profile picture updated✨\n⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝘋 (𝘝2) ⚡");
+      m.reply(
+        `${HEADER}\n\n✨ Profile picture updated successfully!\n\n${FOOTER}`
+      );
+
     } catch (err) {
       console.error(err);
       m.react("❌");
-      m.reply("⚠️ Failed to update profile picture. Please try again!");
+      m.reply(
+        `${HEADER}\n\n${botdata.error}\n\n${FOOTER}`
+      );
     }
   },
 };

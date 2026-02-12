@@ -1,4 +1,6 @@
 import axios from "axios";
+import { format } from "../lib/style.js";
+import botdata from "../botdata.json" assert { type: "json" };
 
 function cleanTitle(title) {
   return title.replace(/#[\w\d_]+/g, "").trim();
@@ -23,12 +25,12 @@ export default {
 
     if (!q || !validUrlPattern.test(q)) {
       await m.react("❓");
-      return m.reply("❓Please provide a valid TikTok video or image URL");
+      return m.reply(format("❓ Please provide a valid TikTok video or image URL"));
     }
 
     const response = await conn.sendMessage(
       ctx.from,
-      { text: "📥 Fetching TikTok content..." },
+      { text: format("📥 Fetching TikTok content...") },
       { quoted: mek }
     );
 
@@ -41,25 +43,28 @@ export default {
       const videoData = data.data;
       const clean_title = cleanTitle(videoData.title);
 
+      let stats = `
+📥 *TikTok Downloader*
+
+📌 *Title:* ${clean_title}
+👤 *Author:* ${videoData.author.nickname}
+▶️ *Views:* ${formatNumber(videoData.play_count)}
+❤️ *Likes:* ${formatNumber(videoData.digg_count)}
+💬 *Comments:* ${formatNumber(videoData.comment_count)}
+🔄 *Shares:* ${formatNumber(videoData.share_count)}
+      `.trim();
+
+      if (!videoData.images) {
+        stats += `\n⏱ *Duration:* ${videoData.duration}s`;
+      }
+
+      await conn.sendMessage(ctx.from, {
+        text: format(stats),
+        edit: response.key,
+      });
+
       if (videoData.images && videoData.images.length > 0) {
-        // Image content
         await m.react("🖼️");
-
-        const stats = `
-📥 TikTok Downloader 📥
-
-📌 Title: ${clean_title}
-
-👤 Author: ${videoData.author.nickname}
-▶️ Views: ${formatNumber(videoData.play_count)}
-❤️ Likes: ${formatNumber(videoData.digg_count)}
-💬 Comments: ${formatNumber(videoData.comment_count)}
-🔄 Shares: ${formatNumber(videoData.share_count)}
-
-⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝐃 (𝘝2) ⚡
-        `.trim();
-
-        await conn.sendMessage(ctx.from, { text: stats, edit: response.key });
 
         for (const img of videoData.images) {
           await conn.sendMessage(ctx.from, {
@@ -68,36 +73,19 @@ export default {
           });
         }
       } else {
-        // Video content
         await m.react("🎬");
-
-        const stats = `
-📥 TikTok Downloader 📥
-
-📌 Title: ${clean_title}
-
-👤 Author: ${videoData.author.nickname}
-▶️ Views: ${formatNumber(videoData.play_count)}
-❤️ Likes: ${formatNumber(videoData.digg_count)}
-💬 Comments: ${formatNumber(videoData.comment_count)}
-🔄 Shares: ${formatNumber(videoData.share_count)}
-⏱ Duration: ${videoData.duration}s
-
-⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝐃 (𝘝2) ⚡
-        `.trim();
-
-        await conn.sendMessage(ctx.from, { text: stats, edit: response.key });
 
         await conn.sendMessage(ctx.from, {
           video: { url: videoData.play },
           quoted: mek,
         });
       }
+
     } catch (e) {
       console.log(e);
       m.react("❌");
       await conn.sendMessage(ctx.from, {
-        text: "❌ Failed to fetch or send TikTok content. Try again later.",
+        text: format(botdata.error),
         edit: response.key,
       });
     }

@@ -1,5 +1,7 @@
 // commands/viewonce.js
 import { downloadMediaMessage, sms } from "../lib/msg.js";
+import { format } from "../lib/style.js";
+import botdata from "../botdata.json" assert { type: "json" };
 
 function safeReact(ctx, emoji) {
   try {
@@ -10,7 +12,6 @@ function safeReact(ctx, emoji) {
 function getMessageType(messageObj) {
   if (!messageObj || typeof messageObj !== "object") return null;
 
-  // Only allow media types we can handle
   const allowed = [
     "imageMessage",
     "videoMessage",
@@ -31,74 +32,63 @@ export default {
   async function(conn, mek, m, ctx) {
     try {
       const msg = await sms(conn, mek);
-
-      // ✅ MUST be a reply
       const quoted = msg?.quoted;
+
       if (!quoted) {
         safeReact(ctx, "❗");
         return ctx.reply(
-          "Heheee~ please *reply* to the view-once media you want me to save ✨🫶",
+          format("Please *reply* to the view-once media you want me to save ✨")
         );
       }
 
-      // ✅ Prefer sending back to same chat
       const key = mek?.key || {};
       const targetJid =
         key.remoteJidAlt || key.remoteJid || ctx?.from || msg?.from;
 
-      await ctx.reply("Gimme a sec… I’m grabbing it for you 🐾💫");
+      await ctx.reply(format("Gimme a sec… I’m grabbing it for you 🐾💫"));
 
-      // ✅ Detect type from quoted container
-      // Your sms() sets quoted as raw object like { viewOnceMessageV2: {...} } etc.
       const type = getMessageType(quoted) || quoted?.type;
 
-      // ✅ Download media using robust downloader
       const buffer = await downloadMediaMessage(quoted);
 
-      // ✅ Guard: NEVER send null/empty
       if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
         safeReact(ctx, "❗");
         return ctx.reply(
-          "I couldn’t download that media 😭 Try replying directly to the view-once image/video.",
+          format("I couldn’t download that media 😭 Try replying directly to the view-once image/video.")
         );
       }
 
-      const cuteCaption1 = `✨ *Here Is The View Once Image* ✨
-⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝘋 (𝘝2) ⚡`;
+      const imageCaption = format("✨ *Here Is The View Once Image* ✨");
+      const videoCaption = format("✨ *Here Is The View Once Video* ✨");
 
-      const cuteCaption2 = `✨ *Here Is The View Once Video* ✨
-⚡ 𝘚𝘛𝘙𝘌𝘈𝘔 𝘓𝘐𝘕𝘌 𝘔𝘋 (𝘝2) ⚡`;
-
-      // ✅ If sms() already normalized quoted.type, use that.
-      // Otherwise, downloader already found the correct inner type.
       const finalType =
         quoted?.type ||
         type ||
         (quoted?.imageMessage
           ? "imageMessage"
           : quoted?.videoMessage
-            ? "videoMessage"
-            : quoted?.audioMessage
-              ? "audioMessage"
-              : null);
+          ? "videoMessage"
+          : quoted?.audioMessage
+          ? "audioMessage"
+          : null);
 
       if (finalType === "imageMessage") {
         await conn.sendMessage(
           targetJid,
           {
             image: buffer,
-            caption: cuteCaption1,
+            caption: imageCaption,
           },
-          { quoted: mek },
+          { quoted: mek }
         );
       } else if (finalType === "videoMessage") {
         await conn.sendMessage(
           targetJid,
           {
             video: buffer,
-            caption: cuteCaption2,
+            caption: videoCaption,
           },
-          { quoted: mek },
+          { quoted: mek }
         );
       } else if (finalType === "audioMessage") {
         await conn.sendMessage(
@@ -107,7 +97,7 @@ export default {
             audio: buffer,
             mimetype: "audio/mpeg",
           },
-          { quoted: mek },
+          { quoted: mek }
         );
       } else if (finalType === "stickerMessage") {
         await conn.sendMessage(
@@ -115,7 +105,7 @@ export default {
           {
             sticker: buffer,
           },
-          { quoted: mek },
+          { quoted: mek }
         );
       } else if (finalType === "documentMessage") {
         await conn.sendMessage(
@@ -129,18 +119,18 @@ export default {
               quoted?.documentMessage?.fileName ||
               "file",
           },
-          { quoted: mek },
+          { quoted: mek }
         );
       } else {
         safeReact(ctx, "❗");
-        return ctx.reply(`Unsupported media type 😭`);
+        return ctx.reply(format("Unsupported media type 😭"));
       }
 
       safeReact(ctx, "✅");
     } catch (e) {
       console.log(e);
       safeReact(ctx, "❌");
-      ctx.reply("something went wrong while saving 😭 please try again?");
+      ctx.reply(format(botdata.error || "Something went wrong while saving 😭"));
     }
   },
 };
