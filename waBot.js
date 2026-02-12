@@ -16,8 +16,11 @@ import config from "./config.js";
 import { handleMessage } from "./messageHandler.js";
 import { getSettings } from "./lib/settings.js";
 import { handleBootCommand } from "./lib/bootHandler.js";
-import botdata from "./botdata.json" assert { type: "json" };
+import fs from "fs";
 
+const botdata = JSON.parse(
+  fs.readFileSync(new URL("./botdata.json", import.meta.url))
+);
 // =====================================================
 // FILE PATH
 // =====================================================
