@@ -1,6 +1,8 @@
 import axios from "axios";
 import { format } from "../lib/style.js";
-import botdata from "../botdata.json" assert { type: "json" };
+const botdata = JSON.parse(
+  fs.readFileSync(new URL("./botdata.json", import.meta.url))
+);
 
 function cleanTitle(title) {
   return title.replace(/#[\w\d_]+/g, "").trim();

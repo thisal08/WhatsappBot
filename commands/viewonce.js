@@ -1,7 +1,9 @@
 // commands/viewonce.js
 import { downloadMediaMessage, sms } from "../lib/msg.js";
 import { format } from "../lib/style.js";
-import botdata from "../botdata.json" assert { type: "json" };
+const botdata = JSON.parse(
+  fs.readFileSync(new URL("./botdata.json", import.meta.url))
+);
 
 function safeReact(ctx, emoji) {
   try {

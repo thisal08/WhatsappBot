@@ -2,7 +2,9 @@ import { downloadMediaMessage, sms } from "../lib/msg.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import botdata from "../botdata.json" assert { type: "json" };
+const botdata = JSON.parse(
+  fs.readFileSync(new URL("./botdata.json", import.meta.url))
+);
 
 export default {
   pattern: "gsetpf",
